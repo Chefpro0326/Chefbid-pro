@@ -6,8 +6,11 @@
 <title>ChefBid PRO — AI Catering Intelligence</title>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Mono:wght@300;400;500&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<style>
-:root {
+<script>
+  const RAILWAY = 'https://chefbid-api.onrender.com';
+</script>
+  <style>
+ :root {
   --bg: #f5f0e8;
   --bg2: #ede8df;
   --surface: #ffffff;
@@ -632,7 +635,6 @@ body {
 </style>
 </head>
 <body>
-
 <div class="loading-bar" id="loadingBar"></div>
 <div class="toast" id="toast"></div>
 
@@ -651,17 +653,17 @@ body {
     <div id="loginForm">
       <div class="auth-field"><label>Email</label><input type="email" id="loginEmail" placeholder="chef@restaurant.com"></div>
       <div class="auth-field"><label>Password</label><input type="password" id="loginPw" placeholder="••••••••"></div>
-      <button class="auth-btn" onclick="doLogin()">Sign In to ChefBid</button>
+      <button class="auth-btn" onclick="doLogin()">Sign In</button>
     </div>
     <div id="signupForm" style="display:none">
       <div class="auth-field"><label>Your Name</label><input type="text" id="signupName" placeholder="Chef Marcus"></div>
       <div class="auth-field"><label>Email</label><input type="email" id="signupEmail" placeholder="chef@restaurant.com"></div>
       <div class="auth-field"><label>Password</label><input type="password" id="signupPw" placeholder="Min 6 characters"></div>
 
-      <button class="auth-btn" onclick="doSignup()">Create Pro Account</button>
+      <button class="auth-btn" onclick="doSignup()">Create Free Account</button>
     </div>
     <div class="auth-error" id="authError"></div>
-    <div class="auth-pro-badge">✦ PRO PLAN · All Features Unlocked</div>
+    <div class="auth-pro-badge">✦ FREE PLAN · No Credit Card Required</div>
   </div>
 </div>
 
@@ -680,7 +682,7 @@ body {
       <div class="user-avatar" id="userAvatar">C</div>
       <div class="user-info">
         <div class="uname" id="userNameDisplay">Chef</div>
-        <div class="upro">PRO PLAN</div>
+        <div class="upro" id="planBadge">PRO PLAN</div>
       </div>
     </div>
     <div class="nav-section">Main</div>
@@ -691,7 +693,14 @@ body {
     <button class="nav-item" onclick="showPage('vendors')" id="nav-vendors"><span class="nav-icon">🏪</span> Vendor Tracker</button>
     <button class="nav-item" onclick="showPage('margins')" id="nav-margins"><span class="nav-icon">📊</span> Profit & Margins</button>
     <div class="sidebar-footer">
-
+      <div id="upgradePrompt" style="margin-bottom:10px">
+        <button onclick="showUpgradeModal()" style="width:100%;padding:10px;background:linear-gradient(135deg,#d4a020,#b8860b);border:none;border-radius:8px;color:white;font-family:'Cormorant Garamond',serif;font-size:0.95rem;font-weight:700;cursor:pointer;letter-spacing:0.3px">
+          ✦ Upgrade to PRO
+        </button>
+      </div>
+      <a href="/contact" target="_blank" style="display:block;text-align:center;font-size:0.78rem;color:rgba(255,255,255,0.3);margin-bottom:8px;text-decoration:none;transition:color 0.2s" onmouseover="this.style.color='rgba(255,255,255,0.6)'" onmouseout="this.style.color='rgba(255,255,255,0.3)'">
+        💬 Help & Support
+      </a>
       <button class="logout-btn" onclick="doLogout()">↩ Sign Out</button>
     </div>
   </div>
@@ -833,6 +842,7 @@ body {
         <button class="btn-gold" style="margin-top:14px;width:100%;padding:13px;font-size:1rem" onclick="analyzeMenuAndPrices()" id="menuAnalyzeBtn">
           🤖 AI — Calculate Quantities & Vendor Prices
         </button>
+
       </div>
 
       <!-- AI Order Sheet Output -->
@@ -927,11 +937,13 @@ body {
         </div>
       </div>
 
-      <div id="saveEventSection" style="display:none;margin-top:8px">
-        <div class="pdf-notice" style="margin-bottom:12px">✓ Analysis complete — save this event to your account or export as PDF</div>
-        <div class="gen-bar">
-          <button class="btn-primary" onclick="saveCurrentEvent()">💾 Save Event to Account</button>
-          <button class="btn-outline" onclick="exportPDF()">⬇ Export PDF Report</button>
+      <div id="saveEventSection" style="display:none;margin-top:16px">
+        <div style="background:var(--green-bg);border:1px solid rgba(39,115,90,0.25);border-radius:10px;padding:16px 20px">
+          <div style="font-weight:600;color:var(--green);margin-bottom:12px;font-size:0.95rem">✓ Analysis complete!</div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap">
+            <button class="btn-primary" style="flex:1;min-width:160px" onclick="saveCurrentEvent()">💾 Save Event</button>
+            <button class="btn-outline" style="flex:1;min-width:160px" onclick="exportPDF()">⬇ Export PDF</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1062,6 +1074,276 @@ const DB = {
   del: k => localStorage.removeItem('cb_'+k)
 };
 
+// Split API calls between two services
+// Stripe/subscription calls go to chefbid-api (has Stripe keys)
+// AI calls go to function-bun (has working Anthropic key)
+const AI_URL = 'https://chefbid-app-production.up.railway.app';
+const FREE_EVENT_LIMIT  = 3;
+const BASIC_EVENT_LIMIT = 10;
+
+// Plan levels
+function getUserPlan() {
+  if(!currentUser) return 'free';
+  const plan = DB.get('plan_'+currentUser.email);
+  return plan || 'free'; // 'free', 'basic', 'pro'
+}
+
+function isPro() {
+  return getUserPlan() === 'pro';
+}
+
+function isBasic() {
+  const p = getUserPlan();
+  return p === 'basic' || p === 'pro';
+}
+
+function getEventLimit() {
+  const plan = getUserPlan();
+  if(plan === 'pro')   return Infinity;
+  if(plan === 'basic') return BASIC_EVENT_LIMIT;
+  return FREE_EVENT_LIMIT;
+}
+
+// Features per plan
+function canUsePDF()          { return getUserPlan() === 'pro'; }
+function canUseSavedEvents()  { return getUserPlan() === 'pro'; }
+function canUseMargins()      { return getUserPlan() === 'pro'; }
+function canUseVendorHistory(){ return getUserPlan() === 'pro'; }
+function canUseSousChef()     { return getUserPlan() === 'pro'; }
+function canUseAI()           { return isBasic(); } // basic + pro
+
+// ── AI FETCH WITH AUTO-RETRY ──
+async function fetchAI(payload, retries = 3, delayMs = 3000) {
+  for(let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(AI_URL + '/api/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      // If overloaded and retries remain — wait and retry
+      if(data.error && data.error.message?.toLowerCase().includes('overload') && attempt < retries) {
+        await new Promise(r => setTimeout(r, delayMs));
+        delayMs = Math.floor(delayMs * 1.5);
+        continue;
+      }
+      return data;
+    } catch(e) {
+      if(attempt < retries) {
+        await new Promise(r => setTimeout(r, delayMs));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+// Price cache — stores vendor prices per ingredient so they stay consistent
+const PRICE_CACHE_KEY = 'cb_price_cache';
+function getPriceCache() { try { return JSON.parse(localStorage.getItem(PRICE_CACHE_KEY)||'{}'); } catch(e){ return {}; } }
+function savePriceCache(cache) { localStorage.setItem(PRICE_CACHE_KEY, JSON.stringify(cache)); }
+function cacheVendorPrices(parsed) {
+  if(!parsed?.items) return;
+  const cache = getPriceCache();
+  parsed.items.forEach(item => {
+    const key = item.name.toLowerCase().trim();
+    if(!cache[key]) cache[key] = {};
+    Object.entries(item.vendorPrices||{}).forEach(([vendor, info]) => {
+      // Only cache if we don't have it yet — keeps prices stable
+      if(!cache[key][vendor]) cache[key][vendor] = { price: info.price, unit: info.unit };
+    });
+  });
+  savePriceCache(cache);
+}
+
+function isPro() {
+  if(!currentUser) return false;
+  const status = DB.get('pro_'+currentUser.email);
+  return status === true;
+}
+
+function getSavedEventCount() {
+  if(!currentUser) return 0;
+  const events = DB.get('events_'+currentUser.email) || [];
+  return events.length;
+}
+
+// ── MONTHLY USAGE ──
+// The plan limit counts events PRICED (analyzed) this month, whether or not
+// they are saved. Before this, only saved events counted, so a free user could
+// keep analyzing new events forever as long as they never hit Save.
+function usageKey() {
+  const d = new Date();
+  return 'usage_' + currentUser.email + '_' + d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+}
+function getMonthlyUsage() {
+  if(!currentUser) return 0;
+  return DB.get(usageKey()) || 0;
+}
+function hasUnlimitedEvents() {
+  return isPro() || getEventLimit() === Infinity;
+}
+
+// Fingerprint of the event that has already used one of this month's slots.
+// Re-running analysis on the SAME event (tweaking guests, menu, vendors,
+// labor) is free; changing the event name or date makes it a new event.
+// If name and date are both blank, the menu text is used too, so typing a
+// brand-new menu into a blank form can't dodge the limit.
+let draftCounted = false;
+function draftFingerprint() {
+  const v = id => (document.getElementById(id)?.value || '').trim().toLowerCase();
+  const name = v('evName'), date = v('evDate');
+  return (name || date) ? name + '|' + date : '|menu|' + v('evRecipe');
+}
+function isSameCountedDraft() {
+  return draftCounted !== false && draftCounted === draftFingerprint();
+}
+// id of a saved event loaded back into the form for editing (null = new event)
+let editingEventId = null;
+
+function checkFreeLimit() {
+  if(!currentUser || hasUnlimitedEvents() || isSameCountedDraft()) return true;
+  if(getMonthlyUsage() >= getEventLimit()) {
+    showUpgradeModal();
+    return false;
+  }
+  return true;
+}
+
+function recordAndCheckLimit() {
+  if(!currentUser || hasUnlimitedEvents() || isSameCountedDraft()) return true;
+  const used = getMonthlyUsage();
+  if(used >= getEventLimit()) {
+    showUpgradeModal();
+    return false;
+  }
+  DB.set(usageKey(), used + 1);
+  draftCounted = draftFingerprint();
+  updatePlanBadge();
+  return true;
+}
+
+async function verifyAndSetPro() {
+  if(!currentUser) return;
+  try {
+    const res = await fetch(RAILWAY+'/api/verify-subscription', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email: currentUser.email })
+    });
+    const data = await res.json();
+    if(data.plan) {
+      DB.set('plan_'+currentUser.email, data.plan); // 'basic' or 'pro'
+    } else if(data.isPro) {
+      DB.set('plan_'+currentUser.email, 'pro');
+    }
+    updatePlanBadge();
+    updateFeatureAccess();
+  } catch(e) {}
+}
+
+async function startCheckout(plan) {
+  if(!currentUser) return;
+  plan = plan || 'pro';
+  const btn = event?.target || document.getElementById('upgradeBtn');
+  const origText = btn?.textContent || '';
+  if(btn) { btn.disabled=true; btn.textContent='Loading...'; }
+  try {
+    const res = await fetch(RAILWAY+'/api/create-checkout', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email: currentUser.email, userId: currentUser.email, plan })
+    });
+    const data = await res.json();
+    if(data.url) {
+      window.location.href = data.url;
+    } else {
+      const errMsg = data.error || JSON.stringify(data);
+      showToast('Checkout error: ' + errMsg);
+      if(btn) { btn.disabled=false; btn.textContent=origText; }
+    }
+  } catch(e) {
+    showToast('Connection error: ' + e.message);
+    if(btn) { btn.disabled=false; btn.textContent=origText; }
+  }
+}
+
+function updatePlanBadge() {
+  const badge = document.getElementById('planBadge');
+  if(!badge) return;
+  const plan = getUserPlan();
+  const up = document.getElementById('upgradePrompt');
+  if(plan === 'pro') {
+    badge.textContent = 'PRO PLAN';
+    badge.style.color = 'var(--gold-light)';
+    if(up) up.style.display = 'none';
+  } else if(plan === 'basic') {
+    const count = getMonthlyUsage();
+    badge.textContent = 'BASIC · '+count+'/'+BASIC_EVENT_LIMIT+' events this month';
+    badge.style.color = count >= BASIC_EVENT_LIMIT ? '#e74c3c' : '#5cba8a';
+    if(up) up.style.display = 'block';
+  } else {
+    const count = getMonthlyUsage();
+    badge.textContent = 'FREE · '+count+'/'+FREE_EVENT_LIMIT+' events this month';
+    badge.style.color = count >= FREE_EVENT_LIMIT ? '#e74c3c' : 'rgba(255,255,255,0.4)';
+    if(up) up.style.display = 'block';
+  }
+}
+
+function updateFeatureAccess() {
+  // Show/hide nav items based on plan
+  const marginsNav = document.getElementById('nav-margins');
+  const vendorsNav = document.getElementById('nav-vendors');
+  if(marginsNav) marginsNav.style.opacity = canUseMargins() ? '1' : '0.4';
+  if(vendorsNav) vendorsNav.style.opacity = canUseVendorHistory() ? '1' : '0.4';
+}
+
+function showUpgradeModal() {
+  const m = document.getElementById('upgradeModal');
+  if(m) { m.style.display='flex'; document.body.style.overflow='hidden'; }
+}
+
+function hideUpgradeModal() {
+  const m = document.getElementById('upgradeModal');
+  if(m) { m.style.display='none'; document.body.style.overflow=''; }
+}
+
+function checkUpgradeReturn() {
+  const params = new URLSearchParams(window.location.search);
+  if(params.get('upgrade')==='success') {
+    const plan = params.get('plan') || 'pro';
+    // Store pending plan — will be applied on login if not logged in yet
+    DB.set('pending_upgrade', plan);
+    if(currentUser) {
+      applyPendingUpgrade();
+    } else {
+      const msg = plan === 'basic'
+        ? '🎉 Payment successful! Sign in to activate your Basic plan.'
+        : '🎉 Payment successful! Sign in to activate your PRO plan.';
+      showToast(msg);
+    }
+    window.history.replaceState({}, '', window.location.pathname);
+  } else if(params.get('upgrade')==='cancelled') {
+    showToast('Upgrade cancelled — you can upgrade anytime.');
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+}
+
+function applyPendingUpgrade() {
+  const plan = DB.get('pending_upgrade');
+  if(!plan || !currentUser) return;
+  DB.set('plan_'+currentUser.email, plan);
+  DB.set('pro_'+currentUser.email, plan === 'pro');
+  DB.del('pending_upgrade');
+  const msg = plan === 'basic'
+    ? '🎉 Welcome to ChefBid Basic! Your account is upgraded.'
+    : '🎉 Welcome to ChefBid PRO! All features unlocked!';
+  showToast(msg);
+  updatePlanBadge();
+  updateFeatureAccess();
+  const up = document.getElementById('upgradePrompt');
+  if(up && plan === 'pro') up.style.display = 'none';
+}
+
 // ═══════════════════════════════════════════════
 // AUTH
 // ═══════════════════════════════════════════════
@@ -1101,7 +1383,6 @@ function doLogin() {
 }
 
 function loginUser(user) {
-  // Always ensure email is on the object
   currentUser = { name: user.name, email: user.email };
   DB.set('currentUser', currentUser);
   document.getElementById('authScreen').style.display = 'none';
@@ -1110,6 +1391,10 @@ function loginUser(user) {
   document.getElementById('userNameDisplay').textContent = user.name || 'Chef';
   const hr = new Date().getHours();
   document.getElementById('dashGreeting').textContent = `${hr<12?'Good morning':hr<17?'Good afternoon':'Good evening'}, ${(user.name||'Chef').split(' ')[0]}`;
+  updatePlanBadge();
+  applyPendingUpgrade(); // apply any pending upgrade from Stripe redirect
+  verifyAndSetPro(); // check Stripe subscription in background
+  checkUpgradeReturn(); // handle return from Stripe checkout
   refreshDashboard();
   renderVendorTable();
 }
@@ -1259,6 +1544,8 @@ function repairTruncatedJSON(str) {
   return best;
 }
 
+
+
 async function analyzeMenuAndPrices() {
   const menu    = document.getElementById('evRecipe').value.trim();
   const guests  = parseInt(document.getElementById('evGuests').value) || 0;
@@ -1269,12 +1556,24 @@ async function analyzeMenuAndPrices() {
   if(!guests)  { showToast('Enter the guest count first.'); return; }
   if(!vendors.length) { showToast('Enter at least one vendor name.'); return; }
 
+  // ── FREE PLAN LIMIT CHECK ──
+  if(!recordAndCheckLimit()) return;
+
   const btn = document.getElementById('menuAnalyzeBtn');
   btn.disabled = true;
   btn.textContent = '⏳ AI is calculating quantities & prices...';
   document.getElementById('orderSheetSection').style.display = 'none';
 
-  const systemPrompt = `You are a catering procurement AI. Output ONLY valid JSON. No markdown, no explanation, no code fences. Start your response with { and end with }.`;
+  const systemPrompt = `You are a catering procurement AI. Output ONLY valid JSON. No markdown, no explanation, no code fences. Start your response with { and end with }.
+
+CRITICAL RULES:
+1. Return prices for EVERY vendor listed — use null price (0.00) if a vendor likely does NOT carry that item
+2. Use realistic 2025 US wholesale market prices — be consistent
+3. Broadline distributors (Sysco, US Foods, GFS, PFG) carry most food items
+4. Wholesale clubs (Costco, Sam's Club) focus on bulk proteins, dairy, produce — they do NOT carry specialty restaurant items like egg roll wrappers, specialty sauces, or restaurant-specific supplies
+5. Local wholesale markets focus on fresh produce and may not carry packaged/specialty items
+6. If a vendor type would NOT typically carry an item, set price to 0.00 and unit to "N/A" — do not fabricate availability
+7. bestVendor must be the vendor with the LOWEST non-zero lineTotal for that specific item`;
 
   // Get vendor details including type for better AI pricing context
   const vendorDetails = getActiveVendorDetails();
@@ -1283,12 +1582,15 @@ async function analyzeMenuAndPrices() {
   // Keep prompt minimal — no example JSON to avoid bloat
   const userPrompt = `Catering event: ${svcLabel} service, ${guests} guests.
 Menu: ${menu}
-Vendors (use EXACTLY these as JSON keys): ${vendors.map(v=>'"'+v+'"').join(', ')}
-Vendor types for context: ${vendorDescriptions}
+Vendors (use EXACTLY these as JSON keys — ALL must appear in EVERY item): ${vendors.map(v=>'"'+v+'"').join(', ')}
+Vendor types: ${vendorDescriptions}
 
-For each menu item return professional catering portion per person, total quantity for ${guests} guests with 10% waste buffer, and wholesale price per vendor.
+IMPORTANT: Every single vendor must have a price entry for every single ingredient. Never leave a vendor out.
 
-Respond with ONLY this JSON structure, no other text:
+For each menu item: standard catering portion per person, total for ${guests} guests (+10% waste), price from each vendor.
+bestVendor = vendor with lowest lineTotal for that item.
+
+Respond with ONLY this JSON:
 {"guests":${guests},"serviceType":"${svcLabel}","items":[{"name":"ITEM","portionPerPerson":"X oz","portionOz":X,"totalNeeded":"X lbs","totalLbs":X,"vendorPrices":{"VENDOR":{"price":X.XX,"unit":"lb","lineTotal":X.XX}},"bestVendor":"VENDOR","bestLineTotal":X.XX}],"vendorTotals":{"VENDOR":X.XX},"bestVendor":"VENDOR","bestTotal":X.XX,"bestVendorReason":"text","savingsNote":"text","costPerPersonBest":X.XX}`;
 
   try {
@@ -1296,19 +1598,25 @@ Respond with ONLY this JSON structure, no other text:
     const timeout = setTimeout(() => controller.abort(), 35000);
     const headers = apiHeaders();
 
-    const res = await fetch(window.location.origin + '/.netlify/functions/ai', {
-      method: 'POST', headers, signal: controller.signal,
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 4000,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }]
-      })
-    });
     clearTimeout(timeout);
-    const data = await res.json();
+    const data = await fetchAI({
+      model: "claude-sonnet-4-6",
+      max_tokens: 4000,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }]
+    });
 
-    if(data.error) { showOrderError('API error: ' + (data.error.message||JSON.stringify(data.error))); return; }
+    if(data.error) {
+      const msg = data.error.message || '';
+      if(msg.toLowerCase().includes('overload')) {
+        showOrderError('Our AI is experiencing high demand right now. Please wait a moment and try again.');
+      } else if(msg.toLowerCase().includes('invalid') && msg.toLowerCase().includes('key')) {
+        showOrderError('Authentication error. Please contact support at info@chefbidpro.com');
+      } else {
+        showOrderError('AI temporarily unavailable. Please try again in a moment.');
+      }
+      return;
+    }
 
     const raw = data.content?.map(i => i.text||'').join('') || '';
     console.log('ChefBid raw response:', raw.slice(0,500));
@@ -1407,9 +1715,36 @@ Respond with ONLY this JSON structure, no other text:
     aiVendorPrices = { bestVendor: parsed.bestVendor, savingsNote: parsed.savingsNote, ingredients: parsed.items.map(i=>i.name), prices: {} };
     parsed.items.forEach(item => { aiVendorPrices.prices[item.name] = item.vendorPrices || {}; });
 
+    cacheVendorPrices(parsed); // cache prices for consistency
     renderOrderSheet(parsed, vendors);
     saveEventState(); // update central state with new food cost
-    showToast('✓ Order sheet ready!');
+
+    // Store in lastAnalysis so save/PDF work from the order sheet
+    const labor = calcLabor();
+    const overhead = parseFloat(document.getElementById('evOverhead').value)||0;
+    const targetMargin = parseFloat(document.getElementById('evMargin').value)||30;
+    const foodTotal = parsed.bestTotal || 0;
+    const grandTotal = foodTotal + labor + overhead;
+    const suggestedPrice = grandTotal > 0 ? grandTotal / (1 - targetMargin/100) : 0;
+    lastAnalysis = {
+      name: document.getElementById('evName').value || 'Catering Event',
+      guests: parseInt(document.getElementById('evGuests').value)||0,
+      date: document.getElementById('evDate').value,
+      svcType,
+      recipe: document.getElementById('evRecipe').value,
+      ings: collectIng(),
+      vendorSummary: parsed.bestVendor ? 'Best: '+parsed.bestVendor+' $'+foodTotal.toFixed(2) : '',
+      labor, overhead, targetMargin,
+      foodTotal, grandTotal, suggestedPrice,
+      bestVendor: parsed.bestVendor,
+      orderSheet: parsed,
+      aiText: 'Order Sheet: '+parsed.items.map(i=>i.name+': '+i.totalNeeded).join(', '),
+      timestamp: new Date().toISOString()
+    };
+
+    // Show save and PDF buttons
+    document.getElementById('saveEventSection').style.display = 'block';
+    showToast('✓ Order sheet ready — save or export your event!');
 
   } catch(e) {
     console.error('ChefBid fetch error:', e);
@@ -1676,6 +2011,9 @@ async function runAnalysis() {
     ? `Best vendor: ${aiVendorPrices.bestVendor}. ${aiVendorPrices.savingsNote||''}`
     : 'No vendor data — recommend best sources.';
 
+  // Enforce free plan limit before running analysis
+  if(!recordAndCheckLimit()) return;
+
   const btn = document.getElementById('genBtn');
   btn.disabled = true; btn.textContent = '⏳ Analyzing...';
   document.getElementById('loadingBar').classList.add('show');
@@ -1703,17 +2041,7 @@ Total event price and per-person price to hit ${targetMargin}% margin after $${l
 Three specific tips for this menu/event. Keep each tip to 1-2 sentences.`;
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
-    const headers = apiHeaders();
-    const res = await fetch(window.location.origin + "/.netlify/functions/ai", {
-      method: "POST",
-      headers: headers,
-      signal: controller.signal,
-      body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, messages: [{ role:"user", content:prompt }] })
-    });
-    clearTimeout(timeout);
-    const data = await res.json();
+    const data = await fetchAI({ model: "claude-sonnet-4-6", max_tokens: 1500, messages: [{ role:"user", content:prompt }] });
     if(data.error) {
       const errMsg = data.error.message || JSON.stringify(data.error);
       document.getElementById('aiMainText').innerHTML = `<span style="color:var(--red)">⚠ AI Error: ${errMsg}. Please try again.</span>`;
@@ -1760,8 +2088,8 @@ Three specific tips for this menu/event. Keep each tip to 1-2 sentences.`;
 
   } catch(e) {
     const errDetail = e.name === 'AbortError'
-      ? 'Request timed out (30s). Check your internet connection and try again.'
-      : 'Connection error: ' + e.message;
+      ? 'Request timed out. Please check your internet connection and try again.'
+      : 'Connection error. Please check your internet and try again.';
     document.getElementById('aiMainText').innerHTML = `<span style="color:var(--red)">⚠ ${errDetail}</span>`;
     document.getElementById('aiResultSection').classList.add('show');
   } finally {
@@ -1777,18 +2105,17 @@ async function askFollowUp() {
   btn.disabled = true; btn.textContent = '...';
   const ctx = `Event: ${lastAnalysis.name}, ${lastAnalysis.guests} guests, ${lastAnalysis.svcType} service. Menu: ${lastAnalysis.recipe}. Food cost: $${lastAnalysis.foodTotal?.toFixed(0)}, Labor: $${lastAnalysis.labor?.toFixed(0)}.`;
   try {
-    let fuHeaders;
-    try { fuHeaders = apiHeaders(); } catch(e) { showToast('AI service unavailable. Please try again.'); btn.disabled=false; btn.textContent='Ask AI ›'; return; }
-    const res = await fetch(window.location.origin + "/.netlify/functions/ai", {
-      method:"POST", headers:fuHeaders,
-      body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, messages:[{role:"user",content:`ChefBid AI. Context: ${ctx}\n\nChef asks: ${q}\n\nAnswer concisely, chef-to-chef, with specific numbers.`}] })
-    });
-    const data = await res.json();
+    const data = await fetchAI({ model:"claude-sonnet-4-6", max_tokens:1000, messages:[{role:"user",content:`ChefBid AI. Context: ${ctx}\n\nChef asks: ${q}\n\nAnswer concisely, chef-to-chef, with specific numbers.`}] });
+    if(data.error) throw new Error(data.error.message||'API error');
     const text = data.content?.map(i=>i.text||'').join('\n')||'Unable to respond.';
     document.getElementById('fuText').innerHTML = fmtAI(text);
     document.getElementById('fuResponse').style.display = 'block';
     document.getElementById('fuInput').value = '';
-  } catch(e) {} finally { btn.disabled=false; btn.textContent='Ask AI ›'; }
+  } catch(e) {
+    const msg = e.message?.toLowerCase().includes('overload') ? 'AI is busy. Please wait and try again.' : 'Connection error. Please try again.';
+    document.getElementById('fuText').innerHTML = `<span style="color:var(--red)">${msg}</span>`;
+    document.getElementById('fuResponse').style.display = 'block';
+  } finally { btn.disabled=false; btn.textContent='Ask AI ›'; }
 }
 
 async function getPricingAdvice() {
@@ -1804,16 +2131,14 @@ async function getPricingAdvice() {
   el.style.display='block'; el.classList.add('show');
   el.innerHTML = '<div class="ai-badge"><div class="ai-dot"></div> AI PRICING STRATEGY</div><div class="ai-text">Analyzing...</div>';
   try {
-    let fuHeaders;
-    try { fuHeaders = apiHeaders(); } catch(e) { showToast('AI service unavailable. Please try again.'); btn.disabled=false; btn.textContent='Ask AI ›'; return; }
-    const res = await fetch(window.location.origin + "/.netlify/functions/ai", {
-      method:"POST", headers:fuHeaders,
-      body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, messages:[{role:"user",content:`You are ChefBid AI, a pricing strategist for catering businesses.\n\nEvent context: ${ctx||'Not provided'}\nTotal cost breakdown: Food $${food}, Labor $${labor}, Overhead $${overhead}, Total cost $${totalCost}, Guests: ${guests}\n\nProvide:\n1. Market rate range for this type of event in the US (per person and total)\n2. Three pricing tiers: Budget, Standard, Premium with rationale\n3. What margin percentage to target and why\n4. Any upsell opportunities (bar service, dessert station, etc.)\n5. One negotiation tip for dealing with budget-conscious clients\n\nBe specific with dollar amounts. Speak like a successful caterer coaching a peer.`}] })
-    });
-    const data = await res.json();
+    const data = await fetchAI({ model:"claude-sonnet-4-6", max_tokens:1000, messages:[{role:"user",content:`You are ChefBid AI, a pricing strategist for catering businesses.\n\nEvent context: ${ctx||'Not provided'}\nTotal cost breakdown: Food $${food}, Labor $${labor}, Overhead $${overhead}, Total cost $${totalCost}, Guests: ${guests}\n\nProvide:\n1. Market rate range for this type of event in the US (per person and total)\n2. Three pricing tiers: Budget, Standard, Premium with rationale\n3. What margin percentage to target and why\n4. Any upsell opportunities (bar service, dessert station, etc.)\n5. One negotiation tip for dealing with budget-conscious clients\n\nBe specific with dollar amounts. Speak like a successful caterer coaching a peer.`}] });
+    if(data.error) throw new Error(data.error.message||'API error');
     const text = data.content?.map(i=>i.text||'').join('\n')||'Unable to respond.';
     el.innerHTML = '<div class="ai-badge"><div class="ai-dot"></div> AI PRICING STRATEGY</div><div class="ai-text">'+fmtAI(text)+'</div>';
-  } catch(e) { el.innerHTML='<span style="color:var(--red)">Error. Try again.</span>'; }
+  } catch(e) {
+    const msg = e.message?.toLowerCase().includes('overload') ? 'AI is busy. Please try again in a moment.' : 'Error. Please try again.';
+    el.innerHTML='<span style="color:var(--red)">'+msg+'</span>';
+  }
   finally { btn.disabled=false; btn.textContent='Get AI Pricing Strategy'; }
 }
 
@@ -1822,16 +2147,27 @@ async function getPricingAdvice() {
 // ═══════════════════════════════════════════════
 function saveCurrentEvent() {
   if(!lastAnalysis || !currentUser) return;
+  // The monthly limit is enforced when the event is analyzed, not here,
+  // so saving never blocks a quote the user already priced.
   const events = DB.get('events_'+currentUser.email) || [];
-  events.unshift({ ...lastAnalysis, id: Date.now() });
+  const idx = editingEventId != null ? events.findIndex(e => String(e.id) === String(editingEventId)) : -1;
+  if(idx >= 0) {
+    events[idx] = { ...lastAnalysis, id: events[idx].id };
+    showToast('✓ Event updated!');
+  } else {
+    events.unshift({ ...lastAnalysis, id: Date.now() });
+    showToast('✓ Event saved to your account!');
+  }
   DB.set('events_'+currentUser.email, events);
-  showToast('✓ Event saved to your account!');
   document.getElementById('saveEventSection').style.display = 'none';
+  draftCounted = false;
+  editingEventId = null;
+  updatePlanBadge();
 }
 
 function refreshDashboard() {
   if(!currentUser) return;
-  const events = DB.get('events_'+currentUser.email) || [];
+  const events = loadEventsWithIds();
   const vendors = DB.get('vendors_'+currentUser.email) || [];
   const totalGuests = events.reduce((a,e)=>a+(e.guests||0),0);
   const totalRev = events.reduce((a,e)=>a+(e.suggestedPrice||0),0);
@@ -1843,24 +2179,198 @@ function refreshDashboard() {
   document.getElementById('dashRecentEvents').innerHTML = recent.length ? recent.map(evCard).join('') : '<div class="empty-state"><div class="empty-icon">🍽️</div><p>No events yet. Create your first analysis.</p></div>';
 }
 
-function renderEvents() {
-  if(!currentUser) return;
+// Older or damaged events may have no id. evCard used to invent one on the fly
+// without saving it, so Open/Delete looked for an id that didn't exist.
+function loadEventsWithIds() {
   const events = DB.get('events_'+currentUser.email) || [];
-  document.getElementById('eventsList').innerHTML = events.length ? events.map(evCard).join('') : '<div class="empty-state"><div class="empty-icon">📋</div><p>No saved events. Generate an analysis and save it.</p></div>';
+  let changed = false;
+  events.forEach((e,i) => { if(!e.id) { e.id = Date.now() + i; changed = true; } });
+  if(changed) DB.set('events_'+currentUser.email, events);
+  return events;
 }
 
-function evCard(ev) {
-  const date = ev.date ? new Date(ev.date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : 'No date';
-  return `<div class="event-card" onclick="showPage('events')">
-    <div class="event-info">
-      <div class="ev-name">${ev.name}</div>
-      <div class="ev-meta">${date} · ${ev.guests} guests · <span class="ev-badge ${ev.svcType}">${ev.svcType}</span></div>
+function renderEvents() {
+  if(!currentUser) return;
+  const events = loadEventsWithIds();
+  document.getElementById('eventsList').innerHTML = events.length ? events.map((ev,i)=>evCard(ev,i)).join('') : '<div class="empty-state"><div class="empty-icon">📋</div><p>No saved events. Generate an analysis and save it.</p></div>';
+}
+
+function evCard(ev, idx) {
+  // Ensure every event has an ID
+  if(!ev.id) ev.id = Date.now() + (idx||0);
+  const date = ev.date ? new Date(String(ev.date).length===10 ? ev.date+'T12:00:00' : ev.date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : 'No date';
+  const safeId = ev.id;
+  return `<div class="event-card">
+    <div class="event-info" style="flex:1">
+      <div class="ev-name">${ev.name||'Untitled Event'}</div>
+      <div class="ev-meta">${date} · ${ev.guests||0} guests · <span class="ev-badge ${ev.svcType||'full'}">${ev.svcType||'catering'}</span></div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn-primary btn-sm" onclick="openSavedEvent(${safeId})">📂 Open</button>
+        <button class="btn-outline btn-sm" onclick="exportSavedEventPDF(${safeId})">⬇ Export PDF</button>
+        <button class="btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="deleteSavedEvent(${safeId})">🗑 Delete</button>
+      </div>
     </div>
     <div class="event-cost">
       <div class="ev-amt">$${(ev.suggestedPrice||0).toFixed(0)}</div>
       <div class="ev-guests">suggested price</div>
     </div>
   </div>`;
+}
+
+// ═══════════════════════════════════════════════
+// SAVED EVENT ACTIONS
+// ═══════════════════════════════════════════════
+function openSavedEvent(id) {
+  try { openSavedEventInner(id); }
+  catch(err) {
+    console.error('ChefBid open error:', err);
+    alert('Sorry, this event could not be opened.\n\nDetails: ' + (err && err.message));
+  }
+}
+
+function openSavedEventInner(id) {
+  if(!currentUser) return;
+  const events = DB.get('events_'+currentUser.email) || [];
+  const ev = events.find(e => Number(e.id) === Number(id)) || events.find(e => String(e.id) === String(id));
+  if(!ev) { alert('Event not found. Please refresh the page and try again.'); return; }
+
+  // Load into lastAnalysis so PDF export and follow-up work
+  lastAnalysis = { ...ev };
+
+  // Show modal
+  const modal = document.getElementById('eventDetailModal');
+  const content = document.getElementById('eventDetailContent');
+  if(!modal || !content) { showToast('Error opening event.'); return; }
+
+  const date = ev.date ? new Date(String(ev.date).length===10 ? ev.date+'T12:00:00' : ev.date).toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'}) : 'No date';
+
+  // Build order sheet table if available
+  let orderSheetHTML = '';
+  try {
+  if(ev.orderSheet && ev.orderSheet.items) {
+    const vendors = Object.keys(ev.orderSheet.items[0]?.vendorPrices||{});
+    const rows = ev.orderSheet.items.map(item => {
+      const vCells = vendors.map(v => {
+        const vp = item.vendorPrices?.[v];
+        const isBest = v === item.bestVendor;
+        if(!vp || !vp.price) return '<td style="padding:7px 10px;color:var(--ink-dim)">—</td>';
+        return `<td style="padding:7px 10px;font-family:'DM Mono',monospace;font-size:0.82rem;${isBest?'color:var(--green);font-weight:700':''}">$${Number(vp.price).toFixed(2)}/${vp.unit||'lb'}${isBest?' ★':''}<br><span style="font-size:0.72rem">$${Number(vp.lineTotal||0).toFixed(2)}</span></td>`;
+      }).join('');
+      return `<tr><td style="padding:7px 10px;font-weight:600">${item.name}</td><td style="padding:7px 10px;font-family:'DM Mono',monospace">${item.portionPerPerson}</td><td style="padding:7px 10px;font-family:'DM Mono',monospace;color:var(--gold);font-weight:700">${item.totalNeeded}</td>${vCells}</tr>`;
+    }).join('');
+    orderSheetHTML = `
+    <div style="margin-bottom:16px">
+      <div style="font-size:0.78rem;color:var(--ink-dim);font-family:'DM Mono',monospace;margin-bottom:8px;letter-spacing:1px">ORDER SHEET</div>
+      <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px">
+        <table style="width:100%;border-collapse:collapse;font-size:0.84rem">
+          <thead><tr style="background:var(--bg2)">
+            <th style="padding:7px 10px;text-align:left;font-family:'DM Mono',monospace;font-size:0.62rem;letter-spacing:1px">ITEM</th>
+            <th style="padding:7px 10px;text-align:left;font-family:'DM Mono',monospace;font-size:0.62rem">PER PERSON</th>
+            <th style="padding:7px 10px;text-align:left;font-family:'DM Mono',monospace;font-size:0.62rem">TOTAL</th>
+            ${vendors.map(v=>`<th style="padding:7px 10px;text-align:left;font-family:'DM Mono',monospace;font-size:0.62rem">${v}</th>`).join('')}
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${ev.orderSheet.bestVendor ? `<div style="margin-top:8px;font-size:0.82rem;color:var(--green);font-weight:600">✓ Best vendor: ${ev.orderSheet.bestVendor} · $${ev.orderSheet.bestTotal?.toFixed(2)} total food cost</div>` : ''}
+    </div>`;
+  }
+
+  content.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
+      <div>
+        <div style="font-family:'Cormorant Garamond',serif;font-size:1.6rem;font-weight:700;color:var(--ink)">${ev.name||'Untitled Event'}</div>
+        <div style="font-size:0.8rem;color:var(--ink-dim);font-family:'DM Mono',monospace;margin-top:2px">${date} · ${ev.guests||0} guests · ${ev.svcType||'catering'} service</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn-primary" onclick="editSavedEvent(${ev.id})">✏️ Edit Event</button>
+        <button class="btn-gold" onclick="exportSavedEventPDF(${ev.id})">⬇ Export PDF</button>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px">
+      <div class="cost-tile"><span class="amt">$${(ev.foodTotal||0).toFixed(0)}</span><div class="lbl">Food Cost</div></div>
+      <div class="cost-tile"><span class="amt">$${(ev.labor||0).toFixed(0)}</span><div class="lbl">Labor</div></div>
+      <div class="cost-tile"><span class="amt">$${(ev.overhead||0).toFixed(0)}</span><div class="lbl">Overhead</div></div>
+      <div class="cost-tile"><span class="amt">$${(ev.grandTotal||0).toFixed(0)}</span><div class="lbl">Total Cost</div></div>
+      <div class="cost-tile gold"><span class="amt">$${(ev.suggestedPrice||0).toFixed(0)}</span><div class="lbl">Suggested Price</div></div>
+    </div>
+
+    ${orderSheetHTML}
+
+    ${ev.recipe ? `<div style="margin-bottom:12px"><div style="font-size:0.72rem;color:var(--ink-dim);font-family:'DM Mono',monospace;margin-bottom:6px;letter-spacing:1px">MENU</div><div style="font-size:0.88rem;color:var(--ink-mid);line-height:1.7">${ev.recipe}</div></div>` : ''}
+
+    ${ev.aiText ? `
+    <div style="background:var(--surface2);border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:8px;padding:16px;margin-top:12px">
+      <div style="font-family:'DM Mono',monospace;font-size:0.62rem;color:var(--gold);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">AI ANALYSIS</div>
+      <div style="font-size:0.86rem;line-height:1.75;color:var(--ink-mid)">${fmtAI(ev.aiText)}</div>
+    </div>` : ''}`;
+
+  } catch(err) {
+    console.error('ChefBid openSavedEvent error:', err);
+    content.innerHTML = `<div style="padding:20px;color:var(--red)">Error loading event details. <br><small>${err.message}</small></div>`;
+  }
+  modal.style.display = 'flex';
+  modal.style.alignItems = 'flex-start';
+  modal.style.justifyContent = 'center';
+  modal.scrollTop = 0;
+  document.body.style.overflow = 'hidden';
+}
+
+// Load a saved event back into the New Event form so it can be changed,
+// re-analyzed and re-saved. Re-analyzing it does not use a new monthly slot.
+function editSavedEvent(id) {
+  if(!currentUser) return;
+  const events = DB.get('events_'+currentUser.email) || [];
+  const ev = events.find(e => String(e.id) === String(id));
+  if(!ev) { showToast('Event not found.'); return; }
+  closeEventModal();
+  clearForm();
+  const set = (elId, v) => { const el = document.getElementById(elId); if(el && v != null && v !== '') el.value = v; };
+  set('evName', ev.name);
+  set('evGuests', ev.guests);
+  set('evDate', ev.date);
+  set('evRecipe', ev.recipe);
+  set('evOverhead', ev.overhead);
+  set('evMargin', ev.targetMargin);
+  const vendorNames = Object.keys(ev.orderSheet?.items?.[0]?.vendorPrices || {});
+  vendorNames.slice(0,5).forEach((v,i) => set('ven'+(i+1), v));
+  if(ev.svcType) {
+    const btn = [...document.querySelectorAll('.t-btn')].find(b => (b.getAttribute('onclick')||'').includes("'"+ev.svcType+"'"));
+    if(btn) setSvc(ev.svcType, btn);
+  }
+  lastAnalysis = { ...ev };
+  editingEventId = ev.id;
+  draftCounted = draftFingerprint();
+  showPage('newEvent');
+  document.getElementById('saveEventSection').style.display = 'block';
+  showToast('Editing "' + (ev.name||'event') + '" — re-analyze, then Save to update it.');
+}
+
+function closeEventModal() {
+  const modal = document.getElementById('eventDetailModal');
+  if(modal) modal.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function exportSavedEventPDF(id) {
+  if(!currentUser) return;
+  const events = DB.get('events_'+currentUser.email) || [];
+  const ev = events.find(e => Number(e.id) === Number(id)) || events.find(e => String(e.id) === String(id));
+  if(!ev) { showToast('Event not found.'); return; }
+  // Load into lastAnalysis then export
+  lastAnalysis = { ...ev };
+  exportPDF();
+}
+
+function deleteSavedEvent(id) {
+  if(!currentUser) return;
+  if(!confirm('Delete this event? This cannot be undone.')) return;
+  const events = DB.get('events_'+currentUser.email) || [];
+  const updated = events.filter(e => e.id !== id);
+  DB.set('events_'+currentUser.email, updated);
+  renderEvents();
+  showToast('Event deleted.');
 }
 
 // ═══════════════════════════════════════════════
@@ -2171,25 +2681,28 @@ function getSupplies(type, guests) {
 }
 
 function clearForm() {
-  document.getElementById('evName').value='';
-  document.getElementById('evGuests').value='';
-  document.getElementById('evBudget').value='';
-  document.getElementById('evRecipe').value='';
-  document.getElementById('ven1').value='';
-  document.getElementById('ven2').value='';
-  document.getElementById('ven3').value='';
-  document.getElementById('ven4').value='';
-  document.getElementById('ven5').value='';
-  document.getElementById('ingRows').innerHTML='';
-  document.getElementById('vendorPriceResults').style.display='none';
+  const $ = id => document.getElementById(id) || {style:{},classList:{remove(){}}};
+  $('evName').value='';
+  $('evGuests').value='';
+  $('evBudget').value='';
+  $('evRecipe').value='';
+  $('ven1').value='';
+  $('ven2').value='';
+  $('ven3').value='';
+  $('ven4').value='';
+  $('ven5').value='';
+  $('ingRows').innerHTML='';
+  $('vendorPriceResults').style.display='none';
   aiVendorPrices = [];
   addIng(); addIng(); addIng();
-  document.getElementById('aiResultSection').classList.remove('show');
-  document.getElementById('costTileSection').style.display='none';
-  document.getElementById('supplySection').style.display='none';
-  document.getElementById('followUpSection').style.display='none';
-  document.getElementById('saveEventSection').style.display='none';
+  $('aiResultSection').classList.remove('show');
+  $('costTileSection').style.display='none';
+  $('supplySection').style.display='none';
+  $('followUpSection').style.display='none';
+  $('saveEventSection').style.display='none';
   lastAnalysis=null;
+  draftCounted=false;
+  editingEventId=null;
 }
 
 function showToast(msg) {
@@ -2198,5 +2711,70 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 3000);
 }
 </script>
+
+<!-- Upgrade Modal -->
+<!-- Upgrade Modal -->
+<div id="upgradeModal" style="display:none;position:fixed;inset:0;z-index:600;background:rgba(26,24,22,0.92);backdrop-filter:blur(12px);align-items:center;justify-content:center;padding:20px;overflow-y:auto">
+  <div style="background:#1e1c19;border:1px solid rgba(212,160,32,0.2);border-radius:20px;padding:36px 28px;max-width:620px;width:100%;text-align:center;position:relative;box-shadow:0 40px 80px rgba(0,0,0,0.7)">
+    <button onclick="hideUpgradeModal()" style="position:absolute;top:16px;right:20px;background:none;border:none;color:rgba(242,235,224,0.3);font-size:1.4rem;cursor:pointer">×</button>
+    <div style="font-size:2.5rem;margin-bottom:8px">👨‍🍳</div>
+    <div style="font-family:'Cormorant Garamond',serif;font-size:1.7rem;font-weight:900;color:#f2ebe0;margin-bottom:6px">Unlock More with ChefBid</div>
+    <div style="font-size:0.85rem;color:rgba(242,235,224,0.45);margin-bottom:24px">You have reached your free plan limit. Choose a plan to continue.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">
+      <!-- BASIC -->
+      <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:20px;text-align:left">
+        <div style="font-family:'DM Mono',monospace;font-size:0.65rem;color:#5cba8a;letter-spacing:2px;margin-bottom:8px">BASIC</div>
+        <div style="font-family:'Cormorant Garamond',serif;font-size:2rem;font-weight:900;color:#f2ebe0;margin-bottom:2px">$14<span style="font-size:0.9rem;color:rgba(242,235,224,0.35)">/mo</span></div>
+        <div style="font-size:0.72rem;color:rgba(242,235,224,0.25);margin-bottom:14px;font-family:'DM Mono',monospace">10 EVENTS/MONTH</div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.65);display:flex;gap:6px"><span style="color:#5cba8a">✓</span> AI quantity calculator</div>
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.65);display:flex;gap:6px"><span style="color:#5cba8a">✓</span> Vendor price comparison</div>
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.65);display:flex;gap:6px"><span style="color:#5cba8a">✓</span> Full AI analysis</div>
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.65);display:flex;gap:6px"><span style="color:#5cba8a">✓</span> Labor calculator</div>
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.35);display:flex;gap:6px"><span>✗</span> PDF export</div>
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.35);display:flex;gap:6px"><span>✗</span> Saved events</div>
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.35);display:flex;gap:6px"><span>✗</span> Profit & margin</div>
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.35);display:flex;gap:6px"><span>✗</span> AI Sous Chef</div>
+        </div>
+        <button onclick="startCheckout('basic')" style="width:100%;padding:11px;background:rgba(92,186,138,0.12);border:1px solid #5cba8a;border-radius:8px;color:#5cba8a;font-family:'Cormorant Garamond',serif;font-size:0.95rem;font-weight:700;cursor:pointer">
+          Start Basic — $14/mo
+        </button>
+      </div>
+      <!-- PRO -->
+      <div style="background:rgba(212,160,32,0.08);border:2px solid rgba(212,160,32,0.4);border-radius:14px;padding:20px;text-align:left;position:relative">
+        <div style="position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:#d4a020;color:#1e1c19;font-family:'DM Mono',monospace;font-size:0.62rem;font-weight:700;letter-spacing:1px;padding:3px 12px;border-radius:20px;white-space:nowrap">MOST POPULAR</div>
+        <div style="font-family:'DM Mono',monospace;font-size:0.65rem;color:#d4a020;letter-spacing:2px;margin-bottom:8px">PRO</div>
+        <div style="font-family:'Cormorant Garamond',serif;font-size:2rem;font-weight:900;color:#f2ebe0;margin-bottom:2px">$29<span style="font-size:0.9rem;color:rgba(242,235,224,0.35)">/mo</span></div>
+        <div style="font-size:0.72rem;color:rgba(242,235,224,0.25);margin-bottom:14px;font-family:'DM Mono',monospace">UNLIMITED EVENTS</div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.65);display:flex;gap:6px"><span style="color:#d4a020">✓</span> Everything in Basic</div>
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.65);display:flex;gap:6px"><span style="color:#d4a020">✓</span> Unlimited events</div>
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.65);display:flex;gap:6px"><span style="color:#d4a020">✓</span> PDF export</div>
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.65);display:flex;gap:6px"><span style="color:#d4a020">✓</span> Saved events history</div>
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.65);display:flex;gap:6px"><span style="color:#d4a020">✓</span> Profit & margin calculator</div>
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.65);display:flex;gap:6px"><span style="color:#d4a020">✓</span> AI Sous Chef</div>
+          <div style="font-size:0.8rem;color:rgba(242,235,224,0.65);display:flex;gap:6px"><span style="color:#d4a020">✓</span> Vendor price history</div>
+        </div>
+        <button id="upgradeBtn" onclick="startCheckout('pro')" style="width:100%;padding:11px;background:linear-gradient(135deg,#d4a020,#b8860b);border:none;border-radius:8px;color:white;font-family:'Cormorant Garamond',serif;font-size:0.95rem;font-weight:700;cursor:pointer;box-shadow:0 6px 20px rgba(184,134,11,0.3)">
+          Start Pro — $29/mo
+        </button>
+      </div>
+    </div>
+    <div style="font-size:0.72rem;color:rgba(242,235,224,0.2);margin-bottom:8px">Secure payment by Stripe · Cancel anytime</div>
+    <button onclick="hideUpgradeModal()" style="background:none;border:none;color:rgba(242,235,224,0.25);font-size:0.8rem;cursor:pointer;text-decoration:underline">Continue with free plan</button>
+  </div>
+</div>
+
+<!-- Event Detail Modal -->
+<div id="eventDetailModal" style="display:none;position:fixed;inset:0;z-index:700;background:rgba(26,24,22,0.85);backdrop-filter:blur(10px);align-items:flex-start;justify-content:center;padding:40px 20px;overflow-y:auto">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;width:100%;max-width:760px;padding:32px;position:relative;box-shadow:0 30px 80px rgba(0,0,0,0.3);margin:auto">
+    <button onclick="closeEventModal()" style="position:absolute;top:16px;right:20px;background:none;border:none;font-size:1.4rem;color:var(--ink-dim);cursor:pointer;line-height:1">×</button>
+    <div id="eventDetailContent"></div>
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn-outline" onclick="closeEventModal()">← Back to Events</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
